@@ -47,7 +47,15 @@ a:hover {
   border-style: solid;
   background: #cdcdcd;
 }
-  </style>
+</style>
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-80738444-4"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'UA-80738444-4');
+</script>
 </head>
 <body>
 
@@ -131,6 +139,7 @@ a:hover {
   pdfButton.addEventListener('click', (e) => handlePdfButton());
 
   async function processInputFiles(fileList) {
+    gtag("event", "get_image", {"event_category": "App_Usage"});
     let file = null;
 
     // extract first image in file(s) provided by user
@@ -184,6 +193,7 @@ a:hover {
   }
 
   async function handleCutButton() {
+    gtag("event", "cut_image", {"event_category": "App_Usage"});
     // clear staging canvas
     stagingCanvas.style.border = "1px solid black";
     stagingContext.clearRect(0, 0, stagingCanvas.width, stagingCanvas.height);
@@ -205,6 +215,7 @@ a:hover {
   }
 
   async function handlePdfButton() {
+    gtag("event", "create_pdf", {"event_category": "App_Usage"});
     // create PDF containing one page
     const pdfDoc = await PDFLib.PDFDocument.create();
     const page = pdfDoc.addPage(pdfPageSize);
