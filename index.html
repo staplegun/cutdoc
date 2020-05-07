@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<!--
+/********************************************************************
+* Copyright (c) 2020, Douglas Campbell
+* Licensed under the MIT License.
+********************************************************************/
+-->
+<html lang="en" class="viewer">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="height=device-height, initial-scale=1">
+  <title>Cutdoc - send a screen-free message</title>
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@staplegun" />
+  <meta property="og:url" content="https://staplegun.github.io/cutdoc/" />
+  <meta property="og:title" content="Cutdoc - send a screen-free message" />
+  <meta property="og:description" content="Send a personal letter via email or message that can only be read off-line." />
+  <meta property="og:image" content="https://staplegun.github.io/cutdoc/cutdoc-sample.jpg" />
+  <link href="https://fonts.googleapis.com/css?family=Raleway" rel="stylesheet">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.1/css/bootstrap.min.css" integrity="sha384-WskhaSGFgHYWDcbwN70/dfYBj47jz9qbsMId/iRN3ewGhXQFZCSftd1LZCfmhktB" crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.4.0/dist/pdf-lib.min.js"></script>
+  <script src="https://unpkg.com/downloadjs@1.4.7"></script>
+  <style>
+:root {
+  --background-color: #fafafa;
+  --foreground-color: #121212;
+  --accent-color: #ff5252;
+}
+body {
+  color: var(--foreground-color);
+  background-color: var(--background-color);
+  font-family: Raleway, Georgia, "Times New Roman", serif;
+}
+a:hover {
+  color: var(--accent-color);
+}
+@media screen and (prefers-color-scheme: dark) {
+  :root {
+    --background-color: #121212;
+    --foreground-color: #fafafa;
+  }
+}
+.hidden {
+  display: none;
+}
+.preview {
+  border-style: solid;
+  background: #cdcdcd;
+}
+  </style>
+</head>
+<body>
+
+  <!-- header -->
+  <div class="container">
+    <div class="row">
+      <div class="col-10 main-heading">
+        <h2>Cutdoc</h2>
+      </div>
+      <div class="col-2 text-right">
+        <a href="about.html">About</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="row">
+
+      <div class="col-sm-12 col-lg-7">
+        <div>
+        <canvas id="display-canvas" width="420" height="600" class="preview">Canvas not supported</canvas>
+        </div>
+      </div>
+
+      <div class="col-sm-12 col-lg-5 mt-3">
+        <div class="row">
+          <div class="col-6">
+            <input id="file-input" type="file" accept="image/jpeg" class="custom-file-input" />
+            <label class="custom-file-label" for="customFile">File/Photo</label>
+          </div>
+          <div class="col-6">
+            <button id="cut-button" type="button" class="btn btn-primary">Cut</button>
+            <button id="pdf-button" type="button" class="btn btn-success ml-2">Send</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+  <canvas id="staging-canvas" class="hidden"></canvas>
+  <canvas id="source-canvas" width="1" height="1" class="hidden">Canvas not supported</canvas>
+  <img id="raw-image" class="hidden">
+
+<script>
+  // image workspaces
+  // - raw-image = place to load original uploaded/camera file, hires
+  // - source-canvas - raw image rotated to portrait, hires
+  // - staging-canvas - prepare image, e.g. sliced version, hires
+  // - display-canvas - low-res version to show current step to user
+
+  // config customisation
+  const sizeA4 = [595.28, 841.89];
+  const sizeLetter = [612.0, 792.0];
+  const pdfPageSize = sizeA4;
+  const pdfBorderSize = 50;
+  const instructionsText = 'INSTRUCTIONS: cut off sides, cut into strips, rearrange strips by number, then take time to enjoy your document. Make your own reply at: staplegun.github.io/cutdoc';
+  // define a fixed destination for each strip after the slice jumble
+  const stripMap = [11,5,10,4,9,3,8,2,7,1,6,0];
+
+  // calculate image details
+  // final image size is PDF page size less the specified border size
+  const pdfImageWidth = pdfPageSize[0] - (pdfBorderSize * 2);
+  const pdfImageHeight = pdfPageSize[1] - (pdfBorderSize * 2);
+  const stripsCount = stripMap.length;
+
+  // config HTML elements
+  const fileInput = document.getElementById('file-input');
+  const rawImg = document.getElementById('raw-image');
+  const sourceCanvas = document.getElementById('source-canvas');
+  const sourceContext = sourceCanvas.getContext('2d');
+  const stagingCanvas = document.getElementById('staging-canvas');
+  const stagingContext = stagingCanvas.getContext('2d');
+  const displayCanvas = document.getElementById('display-canvas');
+  const displayContext = displayCanvas.getContext('2d');
+  const cutButton = document.getElementById('cut-button');
+  const pdfButton = document.getElementById('pdf-button');
+
+  // config event handlers
+  fileInput.addEventListener('change', (e) => processInputFiles(e.target.files));
+  cutButton.addEventListener('click', (e) => handleCutButton());
+  pdfButton.addEventListener('click', (e) => handlePdfButton());
+
+  async function processInputFiles(fileList) {
+    let file = null;
+
+    // extract first image in file(s) provided by user
+    for (let i = 0; i < fileList.length; i++) {
+      if (fileList[i].type.match(/^image\//)) {
+        file = fileList[i];
+        break;
+      }
+    }
+
+    // display the image
+    if (file !== null) {
+      // load image into page
+      await loadImage(URL.createObjectURL(file), rawImg);
+      loadImageToCanvas(file);
+    }
+  }
+
+  async function loadImage(url, elem) {
+    return new Promise((resolve, reject) => {
+      elem.onload = () => resolve(elem);
+      elem.onerror = reject;
+      elem.src = url;
+    });
+  }
+
+  async function loadImageToCanvas(file) {
+    // draw raw image into source canvas and rotate if needed
+    // NB: y=0 starts at top of image
+    sourceCanvas.width = rawImg.width;
+    sourceCanvas.height = rawImg.height;
+    sourceContext.clearRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+    if (rawImg.width > rawImg.height) {
+      sourceContext.translate(sourceCanvas.width, 0);
+      sourceContext.rotate(90 * Math.PI / 180);
+      sourceContext.drawImage(rawImg, 0, 0, sourceCanvas.height, sourceCanvas.width);
+    } else {
+      sourceContext.drawImage(rawImg, 0, 0, sourceCanvas.width, sourceCanvas.height);
+    }
+
+    // match staging canvas to source size then copy (rotated) image in
+    stagingCanvas.width = sourceCanvas.width;
+    stagingCanvas.height = sourceCanvas.height;
+    stagingContext.clearRect(0, 0, stagingCanvas.width, stagingCanvas.height);
+    stagingContext.drawImage(sourceCanvas, 0, 0, stagingCanvas.width, stagingCanvas.height);
+
+    // copy (rotated) image into display canvas
+    // (resized to display canvas dimensions - defined in HTML not JS)
+    displayContext.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
+    displayContext.drawImage(stagingCanvas, 0, 0, displayCanvas.width, displayCanvas.height);
+  }
+
+  async function handleCutButton() {
+    // clear staging canvas
+    stagingCanvas.style.border = "1px solid black";
+    stagingContext.clearRect(0, 0, stagingCanvas.width, stagingCanvas.height);
+
+    // copy vertical strips from source to staging, rearranged as defined in stripMap
+    const stripWidth = stagingCanvas.width / stripsCount;
+    for(i=0; i<stripsCount; i++){
+      stripSourceX = i * stripWidth;
+      stripDestX = stripMap[i] * stripWidth;
+      // drawImage parms: source, source(x,y,w,h), destination(x,y,w,h)
+      stagingContext.drawImage(sourceCanvas, stripSourceX, 0, stripWidth, stagingCanvas.height, stripDestX, 0, stripWidth, stagingCanvas.height);
+      // add rectangle around each strip
+      stagingContext.strokeRect(stripDestX, 0, stripWidth, stagingCanvas.height);
+    }
+
+    // copy (sliced) image into display canvas
+    displayContext.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
+    displayContext.drawImage(stagingCanvas, 0, 0, displayCanvas.width, displayCanvas.height);
+  }
+
+  async function handlePdfButton() {
+    // create PDF containing one page
+    const pdfDoc = await PDFLib.PDFDocument.create();
+    const page = pdfDoc.addPage(pdfPageSize);
+
+    // extract JPEG from staging canvas and insert into PDF page
+    const jpgUrl = stagingCanvas.toDataURL('image/jpeg', 0.92)
+    const jpgImageBytes = await fetch(jpgUrl).then((result) => result.arrayBuffer())
+    const jpgImage = await pdfDoc.embedJpg(jpgImageBytes)
+    page.drawImage(jpgImage, {
+        x: pdfBorderSize,
+        y: pdfBorderSize,
+        width: page.getWidth() - (pdfBorderSize * 2),
+        height: page.getHeight() - (pdfBorderSize * 2),
+      })
+
+    // add strip numbers
+    // NB: y=0 starts at bottom of page
+    const stripWidth = pdfImageWidth / stripsCount;
+    for(i=0; i<stripsCount; i++){
+      page.drawText( (stripMap.indexOf(i)+1).toString(), {
+        x: pdfBorderSize + (i * stripWidth) + 10,
+        y: page.getHeight() - pdfBorderSize + 5,
+        size: 20,
+        font: PDFLib.helveticaFont,
+      })
+    }
+
+    // add instruction text down right side of image
+    // NB: y=0 starts at bottom of page
+    page.drawText(instructionsText, {
+      x: page.getWidth() - pdfBorderSize + 5,
+      y: page.getHeight() - pdfBorderSize,
+      size: 10,
+      font: PDFLib.helveticaFont,
+      rotate: PDFLib.degrees(-90),
+    })
+
+    // generate PDF then trigger download in browser
+    const pdfDataUri = await pdfDoc.saveAsBase64({ dataUri: true });
+    download(pdfDataUri, "cutdoc.pdf", "application/pdf");
+  }
+</script>
+
+</body>
+</html>
